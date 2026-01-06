@@ -4,7 +4,7 @@
 # Multi-stage build for optimized image size
 
 # Stage 1: Build stage
-FROM node:20-alpine AS builder
+FROM node:25-alpine AS builder
 
 LABEL maintainer="Heating Design Team"
 LABEL description="Heating Design API - Build Stage"
@@ -45,7 +45,7 @@ RUN npm prune --production
 
 # ============================================================================
 # Stage 2: Production stage
-FROM node:20-alpine
+FROM node:25-alpine
 
 LABEL maintainer="Heating Design Team"
 LABEL description="Heating Design API - Production"
