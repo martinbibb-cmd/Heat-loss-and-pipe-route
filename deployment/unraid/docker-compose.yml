@@ -1,0 +1,218 @@
+version: '3.8'
+
+services:
+  heating_db:
+    image: postgres:15-alpine
+    container_name: heating_design_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: heating_design
+      POSTGRES_USER: heating_admin
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      # Performance tuning for NAS environment
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=en_US.UTF-8"
+    volumes:
+      # Persistent database storage on Unraid array
+      - /mnt/user/appdata/heating-design/db:/var/lib/postgresql/data
+      # Database initialization scripts
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    ports:
+      - "5433:5432"
+    networks:
+      - heating_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U heating_admin -d heating_design"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c max_connections=100
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+      -c effective_cache_size=1GB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+    labels:
+      - "com.unraid.app=heating-design-db"
+      - "com.unraid.category=database"
+
+  heating_api:
+    image: heating-design-api:latest
+    container_name: heating_design_api
+    restart: unless-stopped
+    depends_on:
+      heating_db:
+        condition: service_healthy
+    environment:
+      # Node environment
+      NODE_ENV: production
+      PORT: 3001
+
+      # Database connection
+      DATABASE_URL: postgresql://heating_admin:${DB_PASSWORD}@heating_db:5432/heating_design
+
+      # Security
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRY: "7d"
+      API_KEY: ${API_KEY}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
+
+      # Storage paths
+      UPLOAD_DIR: /app/uploads
+      EXPORT_DIR: /app/exports
+      TEMP_DIR: /app/temp
+
+      # File upload limits
+      MAX_FILE_SIZE: "50MB"
+      MAX_FILES_PER_PROJECT: "10"
+
+      # Calculation settings
+      CALC_TIMEOUT: "30000"
+      CALC_PRECISION: "2"
+
+      # Integration settings
+      ATLAS_WEBHOOK_URL: ${ATLAS_WEBHOOK_URL:-}
+      ENABLE_WEBHOOKS: ${ENABLE_WEBHOOKS:-false}
+
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FORMAT: "json"
+    volumes:
+      # Shared storage for uploads and exports
+      - /mnt/user/appdata/heating-design/uploads:/app/uploads
+      - /mnt/user/appdata/heating-design/exports:/app/exports
+      - /mnt/user/appdata/heating-design/temp:/app/temp
+      - /mnt/user/appdata/heating-design/logs:/app/logs
+    ports:
+      - "3001:3001"
+    networks:
+      - heating_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    labels:
+      - "com.unraid.app=heating-design-api"
+      - "com.unraid.category=backend"
+      - "traefik.enable=true"
+      - "traefik.http.routers.heating-api.rule=Host(`heating-api.local`)"
+      - "traefik.http.services.heating-api.loadbalancer.server.port=3001"
+
+  heating_web:
+    image: heating-design-web:latest
+    container_name: heating_design_web
+    restart: unless-stopped
+    depends_on:
+      heating_api:
+        condition: service_healthy
+    environment:
+      # API endpoint (set to your Unraid IP)
+      VITE_API_URL: ${API_URL:-http://192.168.1.100:3001}
+      VITE_API_TIMEOUT: "30000"
+
+      # PWA settings
+      VITE_APP_NAME: "Heating Design Pro"
+      VITE_APP_SHORT_NAME: "Heating"
+      VITE_APP_DESCRIPTION: "Professional Heating System Design Tool"
+
+      # Feature flags
+      VITE_ENABLE_OFFLINE: "true"
+      VITE_ENABLE_SYNC: "true"
+      VITE_ENABLE_EXPORT: "true"
+
+      # Atlas integration
+      VITE_ATLAS_INTEGRATION: ${ATLAS_INTEGRATION:-false}
+      VITE_ATLAS_CALLBACK_URL: ${ATLAS_CALLBACK_URL:-}
+    ports:
+      - "3000:80"
+    networks:
+      - heating_network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    labels:
+      - "com.unraid.app=heating-design-web"
+      - "com.unraid.category=frontend"
+      - "traefik.enable=true"
+      - "traefik.http.routers.heating-web.rule=Host(`heating.local`)"
+      - "traefik.http.services.heating-web.loadbalancer.server.port=80"
+
+  # Optional: Redis for caching and session management
+  heating_redis:
+    image: redis:7-alpine
+    container_name: heating_design_redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - /mnt/user/appdata/heating-design/redis:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - heating_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    labels:
+      - "com.unraid.app=heating-design-redis"
+      - "com.unraid.category=cache"
+
+  # Optional: Backup service for automated database backups
+  heating_backup:
+    image: prodrigestivill/postgres-backup-local:15-alpine
+    container_name: heating_design_backup
+    restart: unless-stopped
+    depends_on:
+      heating_db:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: heating_db
+      POSTGRES_DB: heating_design
+      POSTGRES_USER: heating_admin
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: 7
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 6
+      HEALTHCHECK_PORT: 8080
+    volumes:
+      - /mnt/user/appdata/heating-design/backups:/backups
+    networks:
+      - heating_network
+    labels:
+      - "com.unraid.app=heating-design-backup"
+      - "com.unraid.category=maintenance"
+
+networks:
+  heating_network:
+    name: heating_design_network
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16
+
+volumes:
+  # Named volumes for better management
+  db_data:
+    driver: local
+  uploads:
+    driver: local
+  exports:
+    driver: local
+  redis_data:
+    driver: local
