@@ -1,0 +1,332 @@
+// Heating Design Database Schema
+// Professional heating system design with heat loss calculations
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// User Management
+// ============================================================================
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String   @map("password_hash")
+  fullName      String?  @map("full_name")
+  companyName   String?  @map("company_name")
+  role          UserRole @default(USER)
+  isActive      Boolean  @default(true) @map("is_active")
+
+  // Timestamps
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  projects      Project[]
+  apiKeys       ApiKey[]
+
+  @@map("users")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  ENGINEER
+}
+
+// ============================================================================
+// Projects
+// ============================================================================
+
+model Project {
+  id          String        @id @default(uuid())
+  userId      String        @map("user_id")
+  name        String
+  description String?
+  address     String?
+  clientName  String?       @map("client_name")
+  clientEmail String?       @map("client_email")
+  status      ProjectStatus @default(DRAFT)
+
+  // Atlas integration
+  surveyId    String?       @unique @map("survey_id")
+
+  // Metadata (JSON for flexible data)
+  metadata    Json          @default("{}")
+
+  // Timestamps
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  floorPlans  FloorPlan[]
+  pipeRoutes  PipeRoute[]
+  exports     Export[]
+
+  @@index([userId])
+  @@index([status])
+  @@map("projects")
+}
+
+enum ProjectStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETED
+  ARCHIVED
+}
+
+// ============================================================================
+// Floor Plans
+// ============================================================================
+
+model FloorPlan {
+  id          String   @id @default(uuid())
+  projectId   String   @map("project_id")
+  name        String
+  floorLevel  Int      @default(0) @map("floor_level")
+
+  // File information
+  fileUrl     String?  @map("file_url")
+  fileSize    Int?     @map("file_size")
+  fileType    String?  @map("file_type")
+
+  // Scale and dimensions
+  scaleFactor Decimal? @map("scale_factor") @db.Decimal(10, 4)
+  dimensions  Json?    // {width, height, unit}
+
+  // Timestamps
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  rooms       Room[]
+
+  @@index([projectId])
+  @@map("floor_plans")
+}
+
+// ============================================================================
+// Rooms
+// ============================================================================
+
+model Room {
+  id              String   @id @default(uuid())
+  floorPlanId     String   @map("floor_plan_id")
+  name            String
+  roomType        RoomType @default(OTHER) @map("room_type")
+
+  // Dimensions
+  area            Decimal? @db.Decimal(10, 2) // m²
+  volume          Decimal? @db.Decimal(10, 2) // m³
+  ceilingHeight   Decimal? @map("ceiling_height") @db.Decimal(5, 2) // m
+
+  // Heat loss factors
+  exteriorWalls   Int      @default(0) @map("exterior_walls")
+  windowArea      Decimal  @default(0) @map("window_area") @db.Decimal(10, 2) // m²
+  doorCount       Int      @default(0) @map("door_count")
+
+  // Target temperature
+  targetTemp      Decimal  @default(20.0) @map("target_temperature") @db.Decimal(4, 1) // °C
+
+  // Coordinates for floor plan visualization
+  coordinates     Json?    // [{x, y}, {x, y}, ...]
+
+  // Timestamps
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  floorPlan       FloorPlan          @relation(fields: [floorPlanId], references: [id], onDelete: Cascade)
+  calculations    HeatCalculation[]
+  heatingUnits    HeatingUnit[]
+
+  @@index([floorPlanId])
+  @@map("rooms")
+}
+
+enum RoomType {
+  LIVING_ROOM
+  BEDROOM
+  KITCHEN
+  BATHROOM
+  HALLWAY
+  OFFICE
+  OTHER
+}
+
+// ============================================================================
+// Heat Loss Calculations
+// ============================================================================
+
+model HeatCalculation {
+  id              String             @id @default(uuid())
+  roomId          String             @map("room_id")
+  calculationDate DateTime           @default(now()) @map("calculation_date")
+  status          CalculationStatus  @default(PENDING)
+
+  // Input parameters
+  outdoorTemp     Decimal            @map("outdoor_temp") @db.Decimal(4, 1) // °C
+  indoorTemp      Decimal            @map("indoor_temp") @db.Decimal(4, 1) // °C
+  wallUValue      Decimal            @map("wall_u_value") @db.Decimal(6, 4) // W/m²K
+  windowUValue    Decimal            @map("window_u_value") @db.Decimal(6, 4) // W/m²K
+  floorUValue     Decimal            @map("floor_u_value") @db.Decimal(6, 4) // W/m²K
+  ceilingUValue   Decimal            @map("ceiling_u_value") @db.Decimal(6, 4) // W/m²K
+  airChangeRate   Decimal            @map("air_change_rate") @db.Decimal(4, 2) // ACH
+
+  // Calculation results (Watts)
+  transmissionLoss Decimal?          @map("transmission_loss") @db.Decimal(10, 2)
+  ventilationLoss  Decimal?          @map("ventilation_loss") @db.Decimal(10, 2)
+  totalHeatLoss    Decimal?          @map("total_heat_loss") @db.Decimal(10, 2)
+  safetyFactor     Decimal           @default(1.15) @map("safety_factor") @db.Decimal(4, 2)
+  designHeatLoad   Decimal?          @map("design_heat_load") @db.Decimal(10, 2)
+
+  // Metadata
+  calculationMethod String?          @map("calculation_method")
+  calculationTimeMs Int?             @map("calculation_time_ms")
+  errorMessage      String?          @map("error_message")
+
+  // Timestamps
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  // Relations
+  room             Room              @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  heatingUnits     HeatingUnit[]
+
+  @@index([roomId])
+  @@index([status])
+  @@map("heat_calculations")
+}
+
+enum CalculationStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+// ============================================================================
+// Heating Units (Radiators, etc.)
+// ============================================================================
+
+model HeatingUnit {
+  id                String          @id @default(uuid())
+  roomId            String          @map("room_id")
+  heatCalculationId String?         @map("heat_calculation_id")
+
+  // Unit details
+  unitType          String          @map("unit_type") // radiator, underfloor, etc.
+  manufacturer      String?
+  model             String?
+  outputWatts       Decimal         @map("output_watts") @db.Decimal(10, 2)
+
+  // Flow temperatures
+  flowTemp          Decimal?        @map("flow_temp") @db.Decimal(4, 1) // °C
+  returnTemp        Decimal?        @map("return_temp") @db.Decimal(4, 1) // °C
+
+  // Position and dimensions
+  position          Json?           // {x, y, wall}
+  dimensions        Json?           // {width, height, depth}
+
+  // Timestamps
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+
+  // Relations
+  room              Room            @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  heatCalculation   HeatCalculation? @relation(fields: [heatCalculationId], references: [id])
+
+  @@index([roomId])
+  @@map("heating_units")
+}
+
+// ============================================================================
+// Pipe Routes
+// ============================================================================
+
+model PipeRoute {
+  id                String   @id @default(uuid())
+  projectId         String   @map("project_id")
+  name              String?
+
+  // Pipe specifications
+  pipeDiameter      Int      @map("pipe_diameter") // mm
+  material          String   // copper, PEX, steel
+  insulationThickness Int?   @map("insulation_thickness") // mm
+
+  // Route data
+  routeCoordinates  Json     @map("route_coordinates") // [{x, y, z}, ...]
+  totalLength       Decimal  @map("total_length") @db.Decimal(10, 2) // m
+
+  // Timestamps
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("pipe_routes")
+}
+
+// ============================================================================
+// Exports (PDF reports, etc.)
+// ============================================================================
+
+model Export {
+  id          String     @id @default(uuid())
+  projectId   String     @map("project_id")
+  exportType  ExportType @map("export_type")
+
+  // File information
+  fileUrl     String     @map("file_url")
+  fileSize    Int        @map("file_size")
+  format      String     // pdf, xlsx, etc.
+
+  // Timestamps
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  // Relations
+  project     Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("exports")
+}
+
+enum ExportType {
+  PDF_REPORT
+  EXCEL_CALCULATIONS
+  CSV_DATA
+  DWG_DRAWING
+}
+
+// ============================================================================
+// API Keys (for Atlas integration)
+// ============================================================================
+
+model ApiKey {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  keyHash    String    @map("key_hash")
+  name       String
+  lastUsedAt DateTime? @map("last_used_at")
+  expiresAt  DateTime? @map("expires_at")
+  isActive   Boolean   @default(true) @map("is_active")
+
+  // Timestamps
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("api_keys")
+}
