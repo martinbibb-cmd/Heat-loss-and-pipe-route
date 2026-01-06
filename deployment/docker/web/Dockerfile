@@ -4,7 +4,7 @@
 # Multi-stage build for optimized PWA bundle
 
 # Stage 1: Build stage
-FROM node:20-alpine AS builder
+FROM node:25-alpine AS builder
 
 LABEL maintainer="Heating Design Team"
 LABEL description="Heating Design Web UI - Build Stage"
