@@ -1,0 +1,55 @@
+.env
+.env.local
+.env.*.local
+node_modules/
+dist/
+build/
+coverage/
+.vite/
+.next/
+.cache/
+*.log
+.DS_Store
+*.tsbuildinfo
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.npm
+.eslintcache
+.yarn/
+lerna-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+Thumbs.db
+
+# IDE
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.sublime-project
+*.sublime-workspace
+.idea
+
+# Deployment
+deployment/images/
+*.tar.gz
+
+# Database
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Uploaded files
+uploads/
+exports/
+temp/
+logs/
+backups/
